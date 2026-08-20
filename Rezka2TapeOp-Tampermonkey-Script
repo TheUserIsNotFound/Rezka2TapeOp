@@ -1,0 +1,170 @@
+// ==UserScript==
+// @name         Rezka2TapeOp
+// @namespace    rezka2tapeop
+// @version      1.0.0
+// @description  Переключатель [TapeOp | Rezka]
+// @match        *://rezka.fi/*
+// @match        *://rezka.ag/*
+// @match        *://rezka.co/*
+// @match        *://rezka.today/*
+// @match        *://rezka.zone/*
+// @match        *://rezka.la/*
+// @match        *://rezkago.com/*
+// @match        *://tapeop.dev/*
+// @match        *://www.tapeop.dev/*
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @run-at       document-idle
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  var KEY = 'rezka2tapeop-movie';
+  var SCRIPT_VERSION = '3.3.4';
+  var DEFAULT_SOURCE = 'tapeop';
+
+  if (location.hostname.indexOf('tapeop.dev') !== -1) { onTapeop(); } else { onRezka(); }
+
+  /* ═══ REZKA ═══ */
+  function onRezka() {
+    if (!/\/(films|series|cartoons|animation)\/.+\.html/.test(location.pathname)) return;
+    if (document.getElementById('r2t-switcher')) return;
+
+    var playerBox = document.getElementById('cdnplayer-container');
+    if (!playerBox) return;
+
+    var movie = parseMovie();
+    if (!movie) return;
+
+    var translators = document.querySelector('.b-translators__block');
+    var anchor = translators || playerBox;
+
+    // Переключатель
+    var switcher = document.createElement('div');
+    switcher.id = 'r2t-switcher';
+    switcher.className = 'b-translators__block';
+    switcher.innerHTML =
+      '<div class="b-translators__title">Источник:</div>' +
+      '<ul class="b-translators__list">' +
+      '<li class="b-translator__item" data-src="tapeop">TapeOp</li>' +
+      '<li class="b-translator__item" data-src="rezka">Rezka</li>' +
+      '</ul>';
+
+    // Контейнер TapeOp
+    var embedBox = document.createElement('div');
+    embedBox.id = 'r2t-embed';
+    embedBox.style.cssText = 'display:none;margin-bottom:10px;';
+    var iframe = document.createElement('iframe');
+    iframe.style.cssText = 'width:100%;height:480px;border:0;display:block;background:#000;';
+    iframe.allowFullscreen = true;
+    iframe.src = 'about:blank';
+    embedBox.appendChild(iframe);
+
+    anchor.parentNode.insertBefore(switcher, anchor);
+    anchor.parentNode.insertBefore(embedBox, anchor);
+
+    // Элементы, которые прячем полностью (безопасно — это не плеер)
+    var hideEls = [];
+    if (translators) hideEls.push(translators);
+    ['simple-seasons-tabs', 'simple-episodes-tabs'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) hideEls.push(el);
+    });
+
+    var iframeStarted = false;
+
+    function showTapeop() {
+      GM_setValue(KEY, { movie: movie, ts: Date.now() });
+      if (!iframeStarted) { iframe.src = 'https://tapeop.dev/'; iframeStarted = true; }
+      embedBox.style.display = 'block';
+      hideEls.forEach(function (el) { el.style.display = 'none'; });
+      // Родной плеер НЕ трогаем iframe — только прячем визуально, сохраняя размер
+      playerBox.style.visibility = 'hidden';
+      playerBox.style.position = 'absolute';
+      playerBox.style.pointerEvents = 'none';
+    }
+
+    function showRezka() {
+      embedBox.style.display = 'none';
+      hideEls.forEach(function (el) { el.style.display = ''; });
+      playerBox.style.visibility = '';
+      playerBox.style.position = '';
+      playerBox.style.pointerEvents = '';
+    }
+
+    function activate(src) {
+      switcher.querySelectorAll('.b-translator__item').forEach(function (t) {
+        t.classList.toggle('active', t.dataset.src === src);
+      });
+      if (src === 'tapeop') { showTapeop(); } else { showRezka(); }
+    }
+
+    switcher.querySelectorAll('.b-translator__item').forEach(function (t) {
+      t.addEventListener('click', function () { activate(t.dataset.src); });
+    });
+
+    activate(DEFAULT_SOURCE);
+  }
+
+  /* ═══ Парсинг данных ═══ */
+  function parseMovie() {
+    var title = null, year = null;
+    var og = document.querySelector('meta[property="og:title"]');
+    if (og && og.content) {
+      var m = og.content.match(/^(.+?)\s*\((\d{4})\)/);
+      if (m) { title = m[1]; year = m[2]; } else { title = og.content.trim(); }
+    }
+    if (!title) {
+      var h1 = document.querySelector('h1[itemprop="name"]') || document.querySelector('h1');
+      if (h1) title = (h1.textContent || '').trim();
+    }
+    if (!year) {
+      var my = location.pathname.match(/-(\d{4})(?:-latest)?\.html$/);
+      if (my) year = my[1];
+    }
+    if (!title) return null;
+    title = title.replace(/смотреть онлайн.*$/i, '').replace(/\s+/g, ' ').trim();
+    if (year && title.indexOf('(') === -1) title += ' (' + year + ')';
+
+    var movie = { title: title };
+    var imdb = decodeHelp('.b-post__info_rates.imdb a', /(tt\d+)/);
+    var kp = decodeHelp('.b-post__info_rates.kp a', /\/(?:film|series)\/(\d+)/);
+    if (imdb) movie.imdb = imdb;
+    if (kp) movie.kinopoisk = kp;
+    return movie;
+  }
+
+  function decodeHelp(selector, pattern) {
+    try {
+      var a = document.querySelector(selector);
+      if (!a) return null;
+      var b64 = ((a.getAttribute('href') || '').split('/help/')[1] || '').split('/')[0];
+      if (!b64) return null;
+      var m = decodeURIComponent(atob(b64)).match(pattern);
+      return m ? (m[1] || m[0]) : null;
+    } catch (e) { return null; }
+  }
+
+  /* ═══ TAPEOP ═══ */
+  function onTapeop() {
+    var stored = GM_getValue(KEY, null);
+    if (!stored || !stored.movie) return;
+    if (Date.now() - (stored.ts || 0) > 10 * 60 * 1000) return;
+
+    var started = Date.now();
+    var timer = setInterval(function () {
+      var w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+      if (typeof w.init === 'function') {
+        clearInterval(timer);
+        var s = document.createElement('script');
+        s.textContent = 'globalThis.init(JSON.parse(' +
+          JSON.stringify(JSON.stringify(stored.movie)) + '), ' +
+          JSON.stringify(SCRIPT_VERSION) + ');';
+        (document.body || document.documentElement).appendChild(s);
+      } else if (Date.now() - started > 20000) {
+        clearInterval(timer);
+      }
+    }, 200);
+  }
+})();
