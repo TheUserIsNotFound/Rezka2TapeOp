@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Rezka → TapeOp
 // @namespace    rezka2tapeop
-// @version      2.9.3
-// @description  Вкладки [TapeOp | Rezka]; строгий матчинг, без чужого контента
+// @version      3.5.1
+// @description  Вкладки [TapeOp | Rezka]; строгий матчинг, без чужого контента; пауза видео при переключении вкладок
 // @match        *://rezka.fi/*
 // @match        *://rezka.ag/*
 // @match        *://rezka.co/*
@@ -14,24 +14,35 @@
 // @match        *://www.tapeop.dev/*
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @run-at       document-idle
+// @run-at       document-start
 // ==/UserScript==
 (function () {
 'use strict';
 
 var KEY = 'rezka2tapeop-movie';
-var SCRIPT_VERSION = '3.3.4';
+var SCRIPT_VERSION = '3.5.1'; // должно совпадать с @version
 
-if (location.hostname.indexOf('tapeop.dev') !== -1) { onTapeop(); } else { onRezka(); }
+if (/(^|\.)tapeop\.dev$/.test(location.hostname)) onTapeop();
+else onRezka();
 
 /* ═══ REZKA ═══ */
 function onRezka() {
   if (!/\/(films|series|cartoons|animation)\/.+\.html/.test(location.pathname)) return;
-  if (document.getElementById('r2t-switcher')) return;
-  var player = document.getElementById('player');
-  if (!player) return;
+  // document-start: DOM ещё не готов — ждём DOMContentLoaded, затем короткий поллинг
+  onReady(function () {
+    var tries = 0;
+    var timer = setInterval(function () {
+      if (document.getElementById('r2t-switcher')) { clearInterval(timer); return; }
+      var player = document.getElementById('player');
+      if (player && installUi(player)) { clearInterval(timer); return; }
+      if (++tries > 50) clearInterval(timer); // ~15 с
+    }, 300);
+  });
+}
+
+function installUi(player) {
   var movie = parseMovie();
-  if (!movie) return;
+  if (!movie) return false;
 
   var switcher = document.createElement('div');
   switcher.id = 'r2t-switcher';
@@ -50,17 +61,18 @@ function onRezka() {
   var iframe = document.createElement('iframe');
   iframe.style.cssText = 'width:100%;height:100%;border:0;display:block;background:#000;';
   iframe.allowFullscreen = true;
+  iframe.allow = 'autoplay; fullscreen; encrypted-media';
   iframe.src = 'about:blank';
   embed.appendChild(iframe);
 
   player.style.position = 'relative';
   player.appendChild(embed);
 
-  var translators = document.querySelector('.b-translators__block:not(#r2t-switcher)');
+  // сам switcher ещё не вставлен в DOM — фильтр :not не нужен
+  var translators = document.querySelector('.b-translators__block');
   var anchor = translators || player;
   anchor.parentNode.insertBefore(switcher, anchor);
 
-  // display:none безопасно только для элементов без собственных измерений размеров
   var hideEls = [];
   if (translators) hideEls.push(translators);
   ['simple-seasons-tabs', 'simple-episodes-tabs'].forEach(function (id) {
@@ -71,7 +83,34 @@ function onRezka() {
   var tabs = switcher.querySelectorAll('.b-translator__item');
   var started = false;
 
+  function pauseRezkaPlayer() {
+    // ПАУЗА, не стоп: плеер остаётся загруженным, позиция сохраняется,
+    // после возврата на вкладку Rezka воспроизведение продолжается с того же места.
+    // Сначала через API плеера (чтобы не рассинхронизировалась кнопка play),
+    // затем гарантированно ставим на паузу все медиаэлементы страницы.
+    var w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+    try { if (w.player && typeof w.player.pause === 'function') w.player.pause(); } catch (e) {}
+    try {
+      if (typeof w.jwplayer === 'function') {
+        var p = w.jwplayer();
+        if (p && typeof p.pause === 'function') p.pause();
+      }
+    } catch (e) {}
+    document.querySelectorAll('video, audio').forEach(function (m) {
+      try { m.pause(); } catch (e) {}
+    });
+  }
+
+  function unloadTapeop() {
+    // Внутри tapeop.dev видео играет в кросс-доменном iframe стороннего плеера —
+    // поставить его на паузу извне невозможно, пауза здесь только выгрузкой.
+    // При возврате на вкладку TapeOp iframe загрузится заново: скрипт снова
+    // вызовет init(), сайт восстановит фильм и выбранный источник из кэша.
+    if (started) { iframe.src = 'about:blank'; started = false; }
+  }
+
   function showTapeop() {
+    pauseRezkaPlayer();
     GM_setValue(KEY, { movie: movie, ts: Date.now() });
     if (!started) { iframe.src = 'https://tapeop.dev/'; started = true; }
     hideEls.forEach(function (el) { el.style.display = 'none'; });
@@ -79,6 +118,7 @@ function onRezka() {
   }
 
   function showRezka() {
+    unloadTapeop();
     embed.style.display = 'none';
     hideEls.forEach(function (el) { el.style.display = ''; });
   }
@@ -93,6 +133,7 @@ function onRezka() {
   });
 
   activate('tapeop');
+  return true;
 }
 
 function parseMovie() {
@@ -114,7 +155,8 @@ function parseMovie() {
   }
   if (title && year && title.indexOf('(') === -1) title += ' (' + year + ')';
   var ogType = document.querySelector('meta[property="og:type"]');
-  var isSeries = !!(ogType && ogType.content === 'video.tv_series');
+  var isSeries = !!(ogType && (ogType.content === 'video.tv_series' || ogType.content === 'video.episode')) ||
+    /^\/series\//.test(location.pathname);
   if (!title) return null;
   return {
     title: title, orig: orig || null, year: year || null, isSeries: isSeries,
@@ -140,54 +182,68 @@ function onTapeop() {
   if (!stored || !stored.movie) return;
   if (Date.now() - (stored.ts || 0) > 10 * 60 * 1000) return;
 
-  // Перехват Kinobox ставим ДО запуска init, чтобы ни один fetch не прошёл мимо.
-  // Валидация: точные id (KP/IMDb) принимаем как есть; для поиска по названию —
-  // один проход по плеерам: /serial/|/anime/ = сериал, /film/|/movie/ = фильм;
+  var jsonLit = JSON.stringify(JSON.stringify(stored.movie));
+
+  // Перехват Kinobox ставим на document-start — до разбора страницы,
+  // чтобы ни один fetch не прошёл мимо. Валидация: точные id (KP/IMDb)
+  // принимаем как есть; для поиска по названию — один проход по плеерам:
+  // /serial/|/anime/ = сериал, /film/|/movie/ = фильм;
   // нераспознанные пути = "неизвестно → разрешить".
-  var guard = document.createElement('script');
-  guard.innerHTML = '(function(){' +
-    'var D=JSON.parse(' + JSON.stringify(JSON.stringify(stored.movie)) + ');' +
+  injectScript('(function(){' +
+    'var D=JSON.parse(' + jsonLit + ');' +
     'var OF=window.fetch.bind(window);' +
     'function ok(j,strict){' +
-    'var a=((j&&j.data)||[]).filter(function(x){return x&&x.iframeUrl;});' +
-    'if(!a.length)return false;' +
-    'if(!strict)return true;' +
-    'var s=0,m=0;for(var i=0;i<a.length;i++){var u=a[i].iframeUrl;' +
-    'if(u.indexOf("/serial/")!==-1||u.indexOf("/anime/")!==-1)s++;' +
-    'else if(u.indexOf("/film/")!==-1||u.indexOf("/movie/")!==-1)m++;}' +
-    'if(s+m===0)return true;' +
-    'return D.isSeries?s>=m:m>s;}' +
-    'function url(p){var u=new URL("https://api.kinobox.tv/api/players");for(var k in p)if(p[k])u.searchParams.set(k,p[k]);return u.toString();}' +
-    'window.fetch=function(i,o){' +
-    'var s=(i&&i.url)?i.url:String(i);' +
-    'if(s.indexOf("api.kinobox.tv")===-1)return OF(i,o);' +
+      'var a=((j&&j.data)||[]).filter(function(x){return x&&x.iframeUrl;});' +
+      'if(!a.length)return false;' +
+      'if(!strict)return true;' +
+      'var s=0,m=0;' +
+      'for(var i=0;i<a.length;i++){var u=a[i].iframeUrl;' +
+        'if(u.indexOf("/serial/")!==-1||u.indexOf("/anime/")!==-1)s++;' +
+        'else if(u.indexOf("/film/")!==-1||u.indexOf("/movie/")!==-1)m++;}' +
+      'if(s+m===0)return true;' +
+      'return D.isSeries?s>=m:m>s;}' +
+    'function url(p){var u=new URL("https://api.kinobox.tv/api/players");' +
+      'for(var k in p)if(p[k])u.searchParams.set(k,p[k]);return u.toString();}' +
     'var C=[];' +
     'if(D.kinopoisk&&D.imdb)C.push({s:0,p:{kinopoisk:D.kinopoisk,imdb:D.imdb,title:D.title}});' +
-    'if(D.kinopoisk)C.push({s:0,p:{kinopoisk:D.kinopoisk,title:D.title}});' +
-    'if(D.imdb)C.push({s:0,p:{imdb:D.imdb,title:D.title}});' +
-    'if(D.orig)C.push({s:1,p:{title:D.orig}});' +
+    'else if(D.kinopoisk)C.push({s:0,p:{kinopoisk:D.kinopoisk,title:D.title}});' +
+    'else if(D.imdb)C.push({s:0,p:{imdb:D.imdb,title:D.title}});' +
+    'if(D.orig&&D.orig!==D.title)C.push({s:1,p:{title:D.orig}});' +
     'C.push({s:1,p:{title:D.title}});' +
-    'return (async function(){' +
-    'for(var n=0;n<C.length;n++){try{' +
-    'var r=await OF(url(C[n].p));var j=await r.clone().json();' +
-    'if(ok(j,C[n].s))return r;' +
-    '}catch(e){}}' +
-    'return new Response(JSON.stringify({data:[]}),{status:200,headers:{"Content-Type":"application/json"}});' +
-    '})();};' +
-    '})();';
-  document.head.appendChild(guard);
+    'window.fetch=function(i,o){' +
+      'var s=(i&&i.url)?i.url:String(i);' +
+      'if(s.indexOf("api.kinobox.tv")===-1)return OF(i,o);' +
+      'return (async function(){' +
+        'for(var n=0;n<C.length;n++){try{' +
+          'var r=await OF(url(C[n].p));' +
+          'if(ok(await r.clone().json(),C[n].s))return r;' +
+        '}catch(e){}}' +
+        'return new Response(JSON.stringify({data:[]}),{status:200,headers:{"Content-Type":"application/json"}});' +
+      '})();};' +
+    '})();');
 
+  // Ждём глобальный init() от страницы и запускаем его с нашим фильмом.
   var started = Date.now();
   var timer = setInterval(function () {
     var w = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
     if (typeof w.init === 'function') {
       clearInterval(timer);
-      var s = document.createElement('script');
-      s.innerHTML = 'globalThis.init(JSON.parse(' +
-        JSON.stringify(JSON.stringify(stored.movie)) + '), ' +
-        JSON.stringify(SCRIPT_VERSION) + ');';
-      document.body.appendChild(s);
+      injectScript('globalThis.init(JSON.parse(' + jsonLit + '),' +
+        JSON.stringify(SCRIPT_VERSION) + ');');
     } else if (Date.now() - started > 20000) clearInterval(timer);
   }, 200);
+}
+
+function onReady(fn) {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', fn, { once: true });
+  } else fn();
+}
+
+function injectScript(code) {
+  var s = document.createElement('script');
+  s.textContent = code; // не innerHTML: без HTML-парсинга, безопасно при любых символах в названии
+  (document.head || document.documentElement).appendChild(s);
+  s.remove();
 }
 })();
