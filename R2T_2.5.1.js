@@ -55,8 +55,8 @@
             '.r2t-btn:hover{background:#d0d7de;color:#000;}' +
             '.b-theme__template__night .r2t-btn:hover{background:#3b444b;color:#fff;}' +
             '.r2t-tab.is-active,.b-theme__template__night .r2t-tab.is-active{background:#00a0b0 !important;color:#fff !important;cursor:default;}' +
-            '.r2t-later.is-saved,.b-theme__template__night .r2t-later.is-saved{background:#2e7d32 !important;color:#fff !important;}' +
-            '.r2t-later.is-watched,.b-theme__template__night .r2t-later.is-watched{background:#1565c0 !important;color:#fff !important;}' +
+            '.r2t-later.is-saved,.b-theme__template__night .r2t-later.is-saved{background:#00a0b0 !important;color:#fff !important;}' +
+            '.r2t-later.is-watched,.b-theme__template__night .r2t-later.is-watched{background:#2e7d32 !important;color:#fff !important;}' +
             '.r2t-later.is-error,.b-theme__template__night .r2t-later.is-error{background:#c62828 !important;color:#fff !important;}' +
             '.r2t-btn:disabled{opacity:.7;cursor:default;}' +
             '.r2t-player-box{width:100%;background:#000;position:relative;}' +
@@ -182,16 +182,16 @@ function createTopBar(movie, wrap, playerBox, iframe, nativeNodes) {
             watchLaterBtn.disabled = false;
             if (state.step === 1) {
                 watchLaterBtn.className = 'r2t-btn r2t-later is-saved';
-                watchLaterBtn.textContent = '✓ В «Досмотреть»';
+                watchLaterBtn.textContent = 'Посмотреть позже';
                 watchLaterBtn.title = 'Нажмите, чтобы отметить как просмотренное';
             } else if (state.step === 2) {
                 watchLaterBtn.className = 'r2t-btn r2t-later is-watched';
-                watchLaterBtn.textContent = '👁 Просмотрено';
-                watchLaterBtn.title = 'Нажмите, чтобы удалить из просмотренного (сбросить статус)';
+                watchLaterBtn.textContent = 'Просмотрено';
+                watchLaterBtn.title = 'Нажмите, чтобы удалить из просмотренного';
             } else {
                 watchLaterBtn.className = 'r2t-btn r2t-later';
                 watchLaterBtn.textContent = 'Посмотреть позже';
-                watchLaterBtn.title = 'Нажмите, чтобы добавить в список «Досмотреть» (/continue/)';
+                watchLaterBtn.title = 'Нажмите, чтобы добавить в список «Посмотреть позже»';
             }
         }
 
