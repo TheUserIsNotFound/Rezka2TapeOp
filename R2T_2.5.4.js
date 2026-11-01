@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rezka2TapeOp
 // @namespace    rezka2tapeop
-// @version      2.5.3
+// @version      2.5.4
 // @description  Вкладки переключения TapeOp / Rezka, кнопка «Посмотреть позже» и ссылки «Актуальные» в шапке
 // @match        *://rezka.fi/*
 // @match        *://rezka.ag/*
@@ -47,9 +47,10 @@ function injectRezkaStyles() {
         var st = document.createElement('style');
         st.id = 'r2t-styles';
         st.textContent =
-            '#top-head{position:fixed !important;top:0 !important;left:0 !important;right:0 !important;width:100% !important;z-index:10002 !important;}' +
-            '#top-nav{position:fixed !important;top:40px !important;left:0 !important;right:0 !important;width:100% !important;margin-top:0 !important;z-index:10001 !important;}' +
-            '#top-nav-wrapper{display:block !important;height:105px !important;}' +
+            '#r2t-header-fixed{position:fixed !important;top:0 !important;left:0 !important;right:0 !important;width:100% !important;z-index:99999 !important;display:flex !important;flex-direction:column !important;overflow:visible !important;background:#09161c;}' +
+            'html body #r2t-header-fixed #top-head{position:relative !important;top:0 !important;left:0 !important;right:0 !important;width:100% !important;margin:0 !important;transform:none !important;z-index:2 !important;overflow:visible !important;}' +
+            'html body #r2t-header-fixed #top-nav{position:relative !important;top:0 !important;left:0 !important;right:0 !important;width:100% !important;margin:0 !important;transform:none !important;z-index:1 !important;overflow:visible !important;}' +
+            '#top-nav-wrapper{display:none !important;height:0 !important;}' +
             '.b-tophead__subscribe-dropdown,.b-tophead__holiday_icon{display:none !important;}' +
             '.r2t-tophead-actual,.r2t-tophead-actual a{text-transform:none !important;letter-spacing:normal !important;font-family:inherit !important;font-size:inherit !important;font-weight:inherit !important;}' +
             '.r2t-tophead-actual{float:left;display:inline-block;color:#b6bec2;font-family:Arial,sans-serif;font-size:12px;line-height:40px;white-space:nowrap;}' +
@@ -75,6 +76,42 @@ function injectRezkaStyles() {
     }
 
     function installTopHeadLinks() {
+        var topHead = document.getElementById('top-head');
+        var topNav = document.getElementById('top-nav');
+
+        // Объединяем красную (#top-head) и зелёную (#top-nav) зоны в единый фиксированный блок
+        if (topHead && topNav && !document.getElementById('r2t-header-fixed')) {
+            var parent = topHead.parentNode;
+            var fixedWrap = document.createElement('div');
+            fixedWrap.id = 'r2t-header-fixed';
+
+            var spacer = document.createElement('div');
+            spacer.id = 'r2t-header-spacer';
+
+            if (window.getComputedStyle) {
+                var headBg = window.getComputedStyle(topHead).backgroundColor;
+                var bodyBg = window.getComputedStyle(document.body).backgroundColor;
+                if (headBg && headBg !== 'rgba(0, 0, 0, 0)' && headBg !== 'transparent') {
+                    fixedWrap.style.backgroundColor = headBg;
+                } else if (bodyBg && bodyBg !== 'rgba(0, 0, 0, 0)' && bodyBg !== 'transparent') {
+                    fixedWrap.style.backgroundColor = bodyBg;
+                }
+            }
+
+            parent.insertBefore(fixedWrap, topHead);
+            fixedWrap.appendChild(topHead);
+            fixedWrap.appendChild(topNav);
+            parent.insertBefore(spacer, fixedWrap.nextSibling);
+
+            var syncSpacerHeight = function () {
+                var h = fixedWrap.offsetHeight;
+                if (h > 0) spacer.style.height = h + 'px';
+            };
+            syncSpacerHeight();
+            window.addEventListener('load', syncSpacerHeight);
+            window.addEventListener('resize', syncSpacerHeight);
+        }
+
         if (document.getElementById('r2t-tophead-actual')) return;
 
         var leftContainer = document.querySelector('#top-head .b-tophead-left') ||
